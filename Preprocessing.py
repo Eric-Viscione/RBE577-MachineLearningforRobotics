@@ -12,4 +12,11 @@ NA,NA,127500
 NA,NA,140000''')
     
 data = pd.read_csv(data_file)
+print("The raw data")
 print(data)
+print("/////////")
+inputs, targets = data.iloc[:, 0:2], data.iloc[:, 2]
+inputs = pd.get_dummies(inputs, dummy_na=True)
+print(inputs)
+inputs = inputs.fillna(inputs.mean())
+print(inputs)
