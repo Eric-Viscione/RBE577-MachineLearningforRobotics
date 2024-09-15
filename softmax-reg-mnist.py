@@ -13,7 +13,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #hyper parameters
 random_seed = 123
 learning_rate = 0.1
-num_epochs = 20
+num_epochs = 5
 batch_size = 256
 num_features = 784
 num_classes = 10
