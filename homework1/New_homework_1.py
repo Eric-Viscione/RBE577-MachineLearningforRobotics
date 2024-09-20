@@ -4,12 +4,20 @@ import torch
 import copy #allows for deep or shallow copies of objects
 import numpy as np #imports the numpy library and references it as numpy
 import torch
-import random
 import matplotlib.pyplot as plt  #imports the matplot lib library for plotting the results and referencing it as plt
 import math as m 
 from torch.utils.data import random_split, DataLoader, TensorDataset
 import pandas as pd
 import time
+
+
+def write_readme():
+
+        print(f"Pytorch version: {torch.__version__}\n")  # Write PyTorch version
+        print(f"NumPy version: {np.__version__}\n")  # Write NumPy version
+        print(f"Pandas version: {pd.__version__}\n")  # Write Pandas version
+
+
 def compute_ycmd(u):
 
     """
@@ -64,6 +72,7 @@ def loss_function(taus_target, u_output, taus_output, limits, rate_limits, ks):
     Inputs: taus_target: the expected value of tau, u_output: the u values from the encoder layers, 
             taus_output: values for torque from the decoder layers, limits: the limits of the thrusters and actuators, 
             rate_limits: limts on the rate of change for thrusters , ks: Coefficents of each lostt function
+    Outputs: Loss: The loss value calculated from the 5 parameters and weighted via k
     """
     Ls = []  ##initilaize an array to store each one as its calculated
     #print(f"All the shapes for the loss function{taus_target.shape, u_output.shape, taus_output.shape, limits.shape, rate_limits.shape}")
@@ -90,22 +99,56 @@ def loss_function(taus_target, u_output, taus_output, limits, rate_limits, ks):
     for k in range(len(rate_limits)):
             Ls3 += torch.sum(torch.maximum(torch.abs(u_output[:,k] - u_output_prev[:,k]) - rate_limits[k], torch.tensor(0.0, device=u_output.device)))   
     Ls.append(Ls3)
+    constrained_angles = [[-100, -80], [80, 100]] ##Tuples for the angle constraints
+
+    a2 = u_output[:,2]
+    a3 = u_output[:,4]
+    mask_a2 = torch.logical_and(a2 > constrained_angles[0][0], a2 < constrained_angles[0][1])
+    mask_a3 = torch.logical_and(a3 > constrained_angles[1][0], a3 < constrained_angles[1][1])
+
+    if mask_a2.any():
+         Ls4 = Ls1
+    else: 
+         Ls4 = 0
+    if mask_a3.any():
+         Ls5 = Ls1    
+    else: 
+         Ls5 = 0       
+    Ls.append(Ls4)
+    Ls.append(Ls5)
+
     L = 0
     for i in range(len(Ls)):   #calculates the final added value for the Ls
             L += ks[i]  * Ls[i]
     return L
 
+##Hyperparmeters for the model
+hyperparameters ={
+     'num_epochs': 100, 
+     'batch_size': 500,
+     'learning_rate': .0001,
+     'loss_weights': [0.000000001,0.000000001,0.000000001,0.000000001,0.000000001,0.000000001],
+     'limits': np.array( [3000 , 3000, 3.1415, 30000 ,3.1415]),
+     'rate_limits':np.array([1000, 1000, .1745, 1000, .1745 ]),
+     'constrained_angles': [[-100, -80], [80, 100]],
+     'optimizer': ['Adem'],
+     'regulizer': ['l2_Decay'],
+     'weight_decay_regularization': 1e-5
 
+
+}
 start_time = time.time()
 #NN settings
-num_epochs = 100
-lr = .0001 
-batch_size = 500
+num_epochs = hyperparameters['num_epochs']
+lr = hyperparameters['learning_rate']
+batch_size = hyperparameters['batch_size']
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #a check to tell the neural network which processing device to use either gpu or cpu
 
-
+write_readme()
 #Data import and Processing
-df = pd.read_pickle("~/Desktop/RBE577-MachineLearningforRobotics/homework1/Training_Data_1mil.pkl")  ##read in the previosuly generated data
+path_to_data = "~/Desktop/RBE577-MachineLearningforRobotics/homework1/Training_Data_1mil.pkl"
+df = pd.read_pickle(path_to_data)  ##read in the previosuly generated data
+weight_decay = hyperparameters['weight_decay_regularization']
 #print(list(df)) #print the headers of the data to check them
 dataset = TensorDataset(torch.tensor(df.values).float())  ##I might need to wrap this in a TensorDataset
 print(len(dataset))
@@ -122,11 +165,10 @@ u_val = val_data_tensor[:, 3:]
 
 
 ##Model Limits and Information
-limits = np.array( [3000 , 3000, 3.1415, 30000 ,3.1415])  ##the limits on F1 F2 A2 F3 A3
-ks = [1, 1, 1, 1, 1]
-ks = [k * 0.000000001 for k in ks]
-rate_limits = np.array([1000, 1000, .1745, 1000, .1745 ])  ##Rate limits on F1 F2 A2 F3 A3
-constrained_angles = [[-100, -80], [80, 100]] ##Tuples for the angle constraints
+limits = hyperparameters['limits']  ##the limits on F1 F2 A2 F3 A3
+ks = hyperparameters['loss_weights']
+rate_limits = hyperparameters['rate_limits']  ##Rate limits on F1 F2 A2 F3 A3
+constrained_angles = hyperparameters['constrained_angles'] ##Tuples for the angle constraints
 
 
 
@@ -149,10 +191,12 @@ Decoder = nn.Sequential(
 
 
 ##Load in the optimizer
-optimizer_encoder = optim.SGD(Encoder.parameters(), lr=lr) #stochastic gradient descent optimizer, model parameters gives the optimiszer the info about the network abocve, the lr is the learning rate which is how fast the optimizer will tweak the weights
-optimizer_decoder = optim.SGD(Decoder.parameters(), lr=lr) #stochastic gradient descent optimizer, model parameters gives the optimiszer the info about the network abocve, the lr is the learning rate which is how fast the optimizer will tweak the weights
-batch_start = torch.arange(0,len(taus_train), batch_size) #this creates a tensor with the point each batch will start starts at 0 to the length of the x_Train data and it will be spaced based on the batch size variable in this case every 100 so [0, 100, 200, 300 .......... len(X_test)]
+# optimizer_encoder = optim.SGD(Encoder.parameters(), lr=lr) #stochastic gradient descent optimizer, model parameters gives the optimiszer the info about the network abocve, the lr is the learning rate which is how fast the optimizer will tweak the weights
+# optimizer_decoder = optim.SGD(Decoder.parameters(), lr=lr) #stochastic gradient descent optimizer, model parameters gives the optimiszer the info about the network abocve, the lr is the learning rate which is how fast the optimizer will tweak the weights
+optimizer_encoder = optim.Adam(Encoder.parameters(), lr=lr,weight_decay=weight_decay)  
+optimizer_decoder = optim.Adam(Decoder.parameters(), lr=lr,weight_decay=weight_decay)  # Replace SGD with Adam
 
+batch_start = torch.arange(0,len(taus_train), batch_size) #this creates a tensor with the point each batch will start starts at 0 to the length of the x_Train data and it will be spaced based on the batch size variable in this case every 100 so [0, 100, 200, 300 .......... len(X_test)]
 ##Initialize values for storing our weights and history
 best_mse = np.inf #initialize the best result to infinity at first
 best_weights = None #we dont have any weights yet
@@ -171,7 +215,7 @@ for epoch in range(num_epochs): #for loop that will go once through each epoch
         u_pred = Encoder(tau_batch)  #train the encoder layer to output thruster values
         tau_pred = Decoder(u_pred)   #train the decoder layer to output tau values
         loss = loss_function(tau_batch, u_pred, tau_pred, limits, rate_limits, ks)  
-        print(loss)
+        #print(loss)
         history_train.append(loss.item())  #store the loss value for later
 
         #clear the gradients from the optimizers
