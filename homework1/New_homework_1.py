@@ -41,13 +41,11 @@ def compute_ycmd(u):
 
     alpha2_rad = alpha2 * deg_to_rad
     alpha3_rad = alpha3 * deg_to_rad
-
    
     alpha2_cos = torch.cos(alpha2_rad)
     alpha2_sin = torch.sin(alpha2_rad)
     alpha3_cos = torch.cos(alpha3_rad)
     alpha3_sin = torch.sin(alpha3_rad)
-
     
     forces = torch.stack([F1, F2, F3], dim=1).unsqueeze(2)  # Shape: (batch_size, 3, 1)
     #print(u.shape)
@@ -78,7 +76,6 @@ def loss_function(taus_target, u_output, taus_output, limits, rate_limits, ks):
     #print(f"All the shapes for the loss function{taus_target.shape, u_output.shape, taus_output.shape, limits.shape, rate_limits.shape}")
     ycmd = compute_ycmd(u_output)
     #mean square error of the targert tau and the calcuated taus from the u outputs(encoder Layer)
-    #print(ycmd.shape)
     Ls0 = torch.mean((taus_target-ycmd)**2)
     Ls.append(Ls0)
     #mean square error of the target tau and the output taus (decoder layer)
@@ -125,15 +122,15 @@ def loss_function(taus_target, u_output, taus_output, limits, rate_limits, ks):
 ##Hyperparmeters for the model
 hyperparameters ={
      'num_epochs': 100, 
-     'batch_size': 500,
-     'learning_rate': .0001,
+     'batch_size': 5000,
+     'learning_rate': .001,
      'loss_weights': [0.000000001,0.000000001,0.000000001,0.000000001,0.000000001,0.000000001],
      'limits': np.array( [3000 , 3000, 3.1415, 30000 ,3.1415]),
      'rate_limits':np.array([1000, 1000, .1745, 1000, .1745 ]),
      'constrained_angles': [[-100, -80], [80, 100]],
      'optimizer': ['Adem'],
      'regulizer': ['l2_Decay'],
-     'weight_decay_regularization': 1e-5
+     'weight_decay_regularization': 1e-4
 
 
 }
@@ -146,11 +143,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #a check t
 
 write_readme()
 #Data import and Processing
-path_to_data = "~/Desktop/RBE577-MachineLearningforRobotics/homework1/Training_Data_1mil.pkl"
+path_to_data = "Training_Data_1mil.pkl"
 df = pd.read_pickle(path_to_data)  ##read in the previosuly generated data
 weight_decay = hyperparameters['weight_decay_regularization']
-#print(list(df)) #print the headers of the data to check them
-dataset = TensorDataset(torch.tensor(df.values).float())  ##I might need to wrap this in a TensorDataset
+
+dataset = TensorDataset(torch.tensor(df.values).float())
 print(len(dataset))
 train_size = int(0.8 *len(dataset))  ##get my value for 80% of this dataset)
 validation_size = len(dataset) - train_size #get the value for validation
@@ -162,37 +159,33 @@ u_train = train_data_tensor[:, 3:]     # 1, F2, Alpha2, F3, Alpha3
 taus_val = val_data_tensor[:, :3]      
 u_val = val_data_tensor[:, 3:] 
 
-
-
 ##Model Limits and Information
 limits = hyperparameters['limits']  ##the limits on F1 F2 A2 F3 A3
 ks = hyperparameters['loss_weights']
 rate_limits = hyperparameters['rate_limits']  ##Rate limits on F1 F2 A2 F3 A3
 constrained_angles = hyperparameters['constrained_angles'] ##Tuples for the angle constraints
 
-
-
 ##Encoder Decoder Models
 Encoder = nn.Sequential(
     nn.Linear(3, 24),   #Layer 1 Input of motion commands
     nn.ReLU(),
+    nn.Dropout(p=0.5),
     nn.Linear(24, 12),  #Layer 2
     nn.ReLU(),
+    nn.Dropout(p=0.5),
     nn.Linear(12, 5),   #Layer 3 outputs the 3 Force and 2 Angle Commands
 ).to(device) 
 Decoder = nn.Sequential(
     nn.Linear(5, 24),   #Layer 4 Input of Force and angle vectors 
     nn.ReLU(),
+    nn.Dropout(p=0.5),
     nn.Linear(24, 12),  #Layer 5
     nn.ReLU(),
+    nn.Dropout(p=0.5),
     nn.Linear(12, 3),   #Layer 6 outputs the 3 taus
     ).to(device)  # Move model to device
 
-
-
 ##Load in the optimizer
-# optimizer_encoder = optim.SGD(Encoder.parameters(), lr=lr) #stochastic gradient descent optimizer, model parameters gives the optimiszer the info about the network abocve, the lr is the learning rate which is how fast the optimizer will tweak the weights
-# optimizer_decoder = optim.SGD(Decoder.parameters(), lr=lr) #stochastic gradient descent optimizer, model parameters gives the optimiszer the info about the network abocve, the lr is the learning rate which is how fast the optimizer will tweak the weights
 optimizer_encoder = optim.Adam(Encoder.parameters(), lr=lr,weight_decay=weight_decay)  
 optimizer_decoder = optim.Adam(Decoder.parameters(), lr=lr,weight_decay=weight_decay)  # Replace SGD with Adam
 
@@ -203,20 +196,27 @@ best_weights = None #we dont have any weights yet
 history_eval = []
 history_train = []
 
+loss_train_hist = []
+loss_test_hist = []
+epochs = []
 
 for epoch in range(num_epochs): #for loop that will go once through each epoch
     Encoder.train() #this is important and sets the model to learning mode could be set to eval to test the model when I am done
     Decoder.train()
     print(f"Epoch {epoch+1}/{num_epochs}")
+
+    loss_train_epoch = []
+    loss_test_epoch = []
+
     for start in batch_start: #loops through that set of starting values we had earlier
         tau_batch = taus_train[start:start+batch_size].to(device) #this takes the value of the the indicy we are at and adds the batch size and pulls those values from our training data (for the first iterations start = 0 so [0:100])\
-        #print(f"Batch size: {tau_batch.size(0)}")
 
         u_pred = Encoder(tau_batch)  #train the encoder layer to output thruster values
         tau_pred = Decoder(u_pred)   #train the decoder layer to output tau values
         loss = loss_function(tau_batch, u_pred, tau_pred, limits, rate_limits, ks)  
-        #print(loss)
+
         history_train.append(loss.item())  #store the loss value for later
+        loss_train_epoch.append(loss) 
 
         #clear the gradients from the optimizers
         optimizer_encoder.zero_grad() 
@@ -239,34 +239,30 @@ for epoch in range(num_epochs): #for loop that will go once through each epoch
               tau_pred_eval = Decoder(u_pred_val)
               loss_eval = loss = loss_function(taus_val, u_pred_val, tau_pred_eval, limits, rate_limits, ks)
               history_eval.append(loss.item())  
+              loss_test_epoch.append(loss) 
               if loss < best_mse: #this is checking to see if we have a better model than the previous best
                 best_mse = loss_eval #stores that
                 best_encoder_weights = copy.deepcopy(Encoder.state_dict())
                 best_decoder_weights = copy.deepcopy(Decoder.state_dict())
-
-
-
+    
+    epochs.append(epoch)
+    loss_train_hist.append(sum(loss_train_epoch) / len(loss_train_epoch))
+    loss_test_hist.append(sum(loss_test_epoch) / len(loss_test_epoch))
 
 elapsed_time = time.time() - start_time
 print(f"Elapsed time: {elapsed_time:.4f} seconds")
 print(f"Best MSE: {best_mse.cpu().item():.2f}")
 print(f"Best RMSE: {np.sqrt(best_mse.cpu().item()):.2f}")
+
 plt.figure(1)
-plt.plot(history_eval)
-plt.xlabel('Epoch')
-plt.ylabel("MSE")
-plt.title("MSE vs Epoch")
-#plt.axhline(y=1.3, color='red', linestyle='--', linewidth=2, label='Horizontal Line')
-
-plt.figure(2)
-plt.plot(history_train)
-plt.title("MSE in train")
-
+loss_train_hist_cpu = [t.cpu().item() for t in loss_train_hist] 
+loss_test_hist_cpu = [t.cpu().item() for t in loss_test_hist]
+plt.plot(epochs, loss_train_hist_cpu, label='Training Loss')
+plt.plot(epochs, loss_test_hist_cpu, label='Testing Loss')
+plt.ylim([0, max(max(loss_train_hist_cpu), max(loss_test_hist_cpu))])
+plt.legend()
+plt.grid()
+plt.xlabel('Epochs')
+plt.ylabel('Total Loss')
+plt.title('Training and Testing Loss vs Epoch')
 plt.show()
-
-
-
-
-
-
-
