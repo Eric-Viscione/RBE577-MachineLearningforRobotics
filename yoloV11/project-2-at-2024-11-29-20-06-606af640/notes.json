@@ -1,0 +1,29 @@
+{
+  "categories": [
+    {
+      "id": 0,
+      "name": "Bicycle"
+    },
+    {
+      "id": 1,
+      "name": "Bus"
+    },
+    {
+      "id": 2,
+      "name": "Car"
+    },
+    {
+      "id": 3,
+      "name": "Motorcycle"
+    },
+    {
+      "id": 4,
+      "name": "Truck"
+    }
+  ],
+  "info": {
+    "year": 2024,
+    "version": "1.0",
+    "contributor": "Label Studio"
+  }
+}
